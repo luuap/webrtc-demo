@@ -40,7 +40,7 @@ export default class HelloWorld extends Vue {
 
   peerConnection: RTCPeerConnection | null = null;
   signallingConnection: WebSocket | null = null;
-  messageChannel: RTCDataChannel | null = null;
+  dataChannel: RTCDataChannel | null = null;
 
   createBtnDisabled = false;
   roomInputDisabled = false;
@@ -52,7 +52,7 @@ export default class HelloWorld extends Vue {
   roomId: string | null = null;
   messages: string[] = ['Messages'];
 
-  // temporarily store candidates if we get them before we set remote description
+  // temporarily store candidates if we get them before we call setRemoteDescription
   candidateQueue: RTCIceCandidateInit[] = [];
 
   createRoom() {
@@ -68,26 +68,13 @@ export default class HelloWorld extends Vue {
       console.log('[SignallingServer] Connected to signalling server');
 
       this.peerConnection = new RTCPeerConnection(this.STUN_CONFIG);
-      this.addPeerConnectionListeners();
+      this.setPeerConnectionListeners();
 
-      // create data channel
-      this.messageChannel = this.peerConnection.createDataChannel("chat");
-      this.messageChannel.onopen = () => {
-        console.log('[MessageChannel] Ready to send messages');
-        this.sendBtnDisabled = false;
-        this.messageInputDisabled = false;
-        this.signallingConnection?.send(JSON.stringify({action: '$disconnect'}));
-        this.signallingConnection?.close();
-      };
+      // create data channel and set listeners
+      this.dataChannel = this.peerConnection.createDataChannel("chat");
+      this.setdataChannelListeners();
 
-      this.messageChannel.onmessage = (event) => {
-        this.messages.push('Other: ' + event.data);
-      }
-      this.messageChannel.onerror = (error) => {
-        console.error(error);
-      };
-
-      // create offer and post to signalling server
+      // create offer and send to signalling server
       const offer = await this.peerConnection.createOffer();
       await this.peerConnection.setLocalDescription(offer); // this will trigger ice candidates
       console.log('[PeerConnection] Created offer:', JSON.stringify({action: 'addOffer', offer}));
@@ -103,8 +90,8 @@ export default class HelloWorld extends Vue {
     // TODO check if we can connect to signalling server
   }
 
-  async joinRoom() {
-
+  joinRoom() {
+    
     this.roomId = this.$refs.roomInput.value;
     // TODO validation
 
@@ -116,25 +103,16 @@ export default class HelloWorld extends Vue {
 
     // connect to signalling server
     this.signallingConnection = new WebSocket(this.SIGNALLING_URL);
-    this.signallingConnection.onopen = async () => { 
+    this.signallingConnection.onopen = () => {
       console.log('[SignallingServer] Connected to signalling server');
 
       this.peerConnection = new RTCPeerConnection(this.STUN_CONFIG);
-      this.addPeerConnectionListeners();
+      this.setPeerConnectionListeners();
 
       // set data channel listeners
       this.peerConnection.ondatachannel = (event) => {
-        this.messageChannel = event.channel;
-        this.messageChannel.onopen = () => {
-          console.log('[MessageChannel] Ready to send messages');
-          this.sendBtnDisabled = false;
-          this.messageInputDisabled = false;
-          this.signallingConnection?.send(JSON.stringify({action: '$disconnect'}));
-          this.signallingConnection?.close();
-        };
-        this.messageChannel.onmessage = (event) => {
-          this.messages.push('Other: ' + event.data);
-        };
+        this.dataChannel = event.channel;
+        this.setdataChannelListeners();
       };
 
       // trigger joinRoom route
@@ -149,28 +127,29 @@ export default class HelloWorld extends Vue {
 
   sendMessage() {
     const message = this.$refs.messageInput.value;
-    this.messageChannel?.send(message);
+    this.dataChannel?.send(message);
     this.messages.push('Me: ' + message);
   }
 
   disconnect() {
 
     // clean up
-    if (this.signallingConnection?.readyState === WebSocket.CLOSED) {
-      this.signallingConnection!.close();
+    if (this.signallingConnection?.readyState !== WebSocket.CLOSED) {
       this.signallingConnection!.send(JSON.stringify({action: '$disconnect'}));
+      this.signallingConnection!.close();
     };
 
-    this.messageChannel?.close();
+    this.dataChannel?.close();
     this.peerConnection?.close();
 
     this.signallingConnection = null;
     this.peerConnection = null;
-    this.messageChannel = null;
+    this.dataChannel = null;
 
     // ui logic
     this.createBtnDisabled = false;
     this.joinBtnDisabled = false;
+    this.roomInputDisabled = false;
     this.disconnectBtnDisabled = true;
     this.sendBtnDisabled = true;
     this.messageInputDisabled = true;
@@ -185,7 +164,7 @@ export default class HelloWorld extends Vue {
       switch(d.action) {
         case 'addOffer': {
           const rtcSessionDescription = new RTCSessionDescription(d.offer);
-          await this.peerConnection?.setRemoteDescription(rtcSessionDescription); // set remote because we are callee, offer is from caller
+          await this.peerConnection?.setRemoteDescription(rtcSessionDescription);
 
           // deal with queue
           await this.consumeCandidateQueue();
@@ -207,7 +186,7 @@ export default class HelloWorld extends Vue {
         }
         case 'addAnswer': {
           const rtcSessionDescription = new RTCSessionDescription(d.answer);
-          await this.peerConnection?.setRemoteDescription(rtcSessionDescription); // set remote because we are caller, answer is from callee
+          await this.peerConnection?.setRemoteDescription(rtcSessionDescription);
 
           // deal with queue
           await this.consumeCandidateQueue();
@@ -223,12 +202,16 @@ export default class HelloWorld extends Vue {
           }
           break;
         }
+        case 'informAvailableAnswer': {
+          // this will trigger the answer and candidate to be sent
+          this.signallingConnection?.send(JSON.stringify({action: 'receiveAnswer', roomId: this.roomId}));
+        }
       }
     });
     await Promise.all(tasks);
   }
 
-  private addPeerConnectionListeners() { // peerConnection must be set before calling this
+  private setPeerConnectionListeners() { // peerConnection must be set before calling this
 
     // set callback for some state changes
     if (this.DEBUG === true) {
@@ -245,7 +228,7 @@ export default class HelloWorld extends Vue {
         console.log('[PeerConnection] SignallingState: ', this.peerConnection!.signalingState)
       };
       this.peerConnection!.onicecandidateerror = (error) => {
-        console.error(error);
+        console.error('[PeerConnection] Error', error);
       };
     };
 
@@ -260,6 +243,25 @@ export default class HelloWorld extends Vue {
       };
     };
 
+  }
+
+  private setdataChannelListeners() { // message channel must be set before calling  
+    this.dataChannel!.onopen = () => {
+      console.log('[DataChannel] Ready to send messages');
+      this.sendBtnDisabled = false;
+      this.messageInputDisabled = false;
+      this.signallingConnection?.send(JSON.stringify({action: '$disconnect'}));
+      this.signallingConnection?.close();
+    };
+    this.dataChannel!.onmessage = (event) => {
+      this.messages.push('Other: ' + event.data);
+    };
+    this.dataChannel!.onerror = (error) => {
+      console.error('[DataChannel] Error: ', error);
+    };
+    this.dataChannel!.onclose = () => {
+      console.log('[DataChannel] dataChannel Closed');
+    };
   }
 
   private async consumeCandidateQueue() {

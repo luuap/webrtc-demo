@@ -1,4 +1,4 @@
-# rtc-demo
+# webrtc-demo
 
 ## Project setup
 ```

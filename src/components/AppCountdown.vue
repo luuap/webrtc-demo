@@ -20,14 +20,20 @@ class Props {
 export default class AppCountdown extends Vue.with(Props) {
   time: number = this.timeout;
 
+  private interval: number | null= null;
+
   mounted() {
-    const interval = setInterval(() => {
+    this.interval = setInterval(() => {
       this.time -= 1;
       if (this.time === 0) {
-        clearInterval(interval);
+        clearInterval(this.interval!);
         this.$emit('finished');
       }
     }, 1000);
+  }
+  
+  beforeUnmount() {
+    clearInterval(this.interval!);
   }
 }
 </script>

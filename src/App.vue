@@ -1,5 +1,5 @@
 <template>
-  <h1>RTC-DEMO</h1>
+  <h1>WebRTC Demo</h1>
   <AppLobby
     v-if="lobbyVisible"
     @create-room="createRoom"
@@ -15,7 +15,8 @@
   </AppCountdown>
   <AppChat 
     v-else-if="chatVisible" 
-    :messages="messages" 
+    :messages="messages"
+    :roomId="roomId"
     @send-message="sendMessage"
     @disconnect="disconnect">
   </AppChat>
@@ -61,7 +62,7 @@ export default class App extends Vue {
   // temporarily store candidates if we get them before we call setRemoteDescription
   candidateQueue: RTCIceCandidateInit[] = [];
 
-  messages: string[] = ['Messages'];
+  messages: string[] = [];
 
   createRoom() {
     // connect to signalling server
@@ -149,6 +150,8 @@ export default class App extends Vue {
     this.signallingConnection = null;
     this.peerConnection = null;
     this.dataChannel = null;
+    this.roomId = null;
+    this.messages = [];
 
     // ui logic
     this.lobbyVisible = true; // TODO check if component is refreshed
@@ -229,7 +232,7 @@ export default class App extends Vue {
           break;
         }
         case "informAvailableAnswer": {
-          // this will trigger the answer and candidate to be sent
+          // this will trigger the answer and candidates to be sent
           this.signallingConnection?.send(
             JSON.stringify({ action: "receiveAnswer", roomId: this.roomId })
           );

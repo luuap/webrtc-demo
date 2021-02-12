@@ -1,6 +1,6 @@
 <template>
   <slot></slot>
-  <h3>{{ time }}</h3>
+  <h3>{{ remainingSeconds }}</h3>
 </template>
 
 <script lang="ts">
@@ -18,22 +18,38 @@ class Props {
   emits: ['finished'],
 })
 export default class AppCountdown extends Vue.with(Props) {
-  time: number = this.timeout;
+  remainingSeconds: number = this.timeout;
 
-  private interval: number | null= null;
+  private timer: number | null = null;
+
+  private startTime = performance.now();
 
   mounted() {
-    this.interval = setInterval(() => {
-      this.time -= 1;
-      if (this.time === 0) {
-        clearInterval(this.interval!);
-        this.$emit('finished');
-      }
-    }, 1000);
+    this.tick(this.startTime);
   }
   
   beforeUnmount() {
-    clearInterval(this.interval!);
+    clearTimeout(this.timer!);
+  }
+
+  /**
+   * Minimizes drift https://gist.github.com/jakearchibald/cb03f15670817001b1157e62a076fe95
+   */
+  private tick(timestamp: number) {
+
+    const elapsed = timestamp - this.startTime;
+    const elapsedSeconds = Math.round(elapsed / 1000);
+    const targetNext = this.startTime + (elapsedSeconds * 1000) + 1000;
+    const delay = targetNext - performance.now();
+
+    this.remainingSeconds = this.timeout - elapsedSeconds;
+
+    if (this.remainingSeconds <= 0) {
+      this.$emit('finished');
+      return;
+    }
+
+    this.timer = setTimeout(() => requestAnimationFrame(this.tick), delay);
   }
 }
 </script>
